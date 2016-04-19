@@ -8,25 +8,27 @@
 #include <stdlib.h>
 #include <pthread.h>
 
+//-- Struct for stock thread arguments ------------------------------
 struct Stock{
   int threadId;
   int stockPrice;
 };
 
+//-- Global struct shared between all threads for the market --------
 struct Market{
   float marketValue;
   int running;
   float mD;
   float mU;
 };
-
 struct Market theMarket;
-int marketValue;
 
+//-- mutex and condiion values --------------------------------------
 pthread_mutex_t marketVsum;
 pthread_cond_t marketWatch;
 pthread_cond_t markDown;
 
+//-- function declerations ------------------------------------------
 void* initStock(void* threadArg);
 void* initWatchDown(void* threadArg);
 void* initWatchUp(void* threadArg);
@@ -34,32 +36,33 @@ void* initWatchUp(void* threadArg);
 int main(int argc, char *argv[]){
 
   int numThreads = 0;
-  int marketPerc = 0; //maybe make a float
+  int marketPerc = 0;
 
 //-- Taking in and parsing arguments --------------------------------
   if(argc==3){
     numThreads = atoi(argv[1]);
     marketPerc = atoi(argv[2]);
 
+    // number of threads btw 1 and 1000
     if(numThreads < 1 || numThreads > 1000){
       fprintf(stderr, "Error: The number of threads are not in the \
 range 1 - 1000, exiting.\n");
       exit(1);
-    }else if(marketPerc < 1 || marketPerc > 20){
+    }
+    // market % change btw 1 and 20
+    else if(marketPerc < 1 || marketPerc > 20){
       fprintf(stderr, "Error: The number for the market percentage \
 is not in the range 1 - 20, exiting.\n");
       exit(1);
     }
   }else{
-    printf("Invalid arguments\n");
+    printf("Arguments should take form ./lab6 <numberThreads> <percent>\n");
     exit(1);
   }   
 
-  //-- Init market value to 100 * numThreads
-  //get rid of magic numbers below
-  //int marketValue = 100 * numThreads;
-  //marketValue = 100 * numThreads;
-  theMarket.marketValue = 100 * numThreads;
+//-- Init market struct values --------------------------------------
+  int stockStartValue = 100;
+  theMarket.marketValue = stockStartValue * numThreads;
   float change = theMarket.marketValue * (0.01*marketPerc);
   float marketDown = theMarket.marketValue - change;
   printf("MarketDown value %f\n", marketDown);
@@ -72,19 +75,26 @@ is not in the range 1 - 20, exiting.\n");
 //-- Create array of stocks -----------------------------------------
   int* stocks = malloc(sizeof(*stocks) * numThreads);
   struct Stock threadStock[numThreads];
+
+//-- Initialize mutex -----------------------------------------------
+  pthread_mutex_init(&marketVsum, NULL);
+
 //-- Create pthreads ------------------------------------------------
   pthread_t threads[numThreads+2];
-  //pthread_t aThread;
-  //pthread_t wThread;
   int rc;
-  int cr;
-//-- Create mutex ---------------------------------------------------
-  pthread_mutex_t marketVsum;
-  
   int rd;
-  rd = pthread_create(&threads[numThreads], NULL, initWatchDown, &marketDown);
   int ru;
+  
+  rd = pthread_create(&threads[numThreads], NULL, initWatchDown, &marketDown);
+  if(rd){
+    fprintf(stderr, "ERROR: return code from pthread_create() is %d\n", rd);
+    exit(-1);
+  }
   ru = pthread_create(&threads[numThreads+1], NULL, initWatchUp, &marketUp);
+  if(ru){
+    fprintf(stderr, "ERROR: return code from pthread_create() is %d\n", ru);
+    exit(-1);
+  }
   
   int t;
   for(t=0; t<numThreads; t++){
@@ -96,29 +106,36 @@ is not in the range 1 - 20, exiting.\n");
     }
   }
 
+//-- Wait for all the threads to exit -------------------------------
   for(t=0; t<numThreads+2; t++){
     pthread_join(threads[t], NULL);
   }
-  printf("Total Market Price of %d Stocks: %.2f\n", numThreads, theMarket.marketValue);
-  return 0;
- // rc = pthread_create(&aThread, NULL, initStock, (void*) &threadStock[0]);
- // printf("A thread was created\n");
-  //pthread_exit(NULL);
-  //have a while look that continuously increases stocks
-}
 
+  printf("Total Market Price of %d Stocks: %.2f\n", numThreads, theMarket.marketValue);
+
+  free(stocks);
+
+  return 0;
+  //pthread_exit(NULL);
+}
+/* This thread is used to initialize the stock variables in the
+ * struct for each thread and then increase or decrease the values
+ * ----------------------------------------------------------------*/
 void* initStock(void* threadArg){
   struct Stock *theStock;
   theStock = (struct Stock *)threadArg;
   theStock->stockPrice = 100;
   //printf("The stock for thread %d is %d\n", theStock->threadId, theStock->stockPrice);
+
   int i;
   srand(time(NULL));
   float stockChange;
-  //for(i = 1; i<=5; i++){
+  
   while(theMarket.running == 1){
     pthread_mutex_lock (&marketVsum);
     //printf("%f\n", theMarket.mU);
+    
+    //-- First check market then signal -----------------------------
     if(theMarket.marketValue>theMarket.mU){
       pthread_cond_signal(&marketWatch);
       //pthread_cond_broadcast(&marketWatch);     
@@ -129,47 +146,32 @@ void* initStock(void* threadArg){
       //pthread_cond_broadcast(&marketWatch);     
     //Get rid of magic numbers below
     //stockChange = (float)rand() % 31 + (-15);
-    int choose = rand() % 5 + (-2);
+    //-- Generate a random pos or neg number ------------------------
+      int choose = rand() % 5 + (-2);
     //printf("choose, %d\n", choose);
-    stockChange = choose * ((float)rand()/(float)(RAND_MAX))*20;
+    //-- Generate a random float and multiple by the pos or neg number
+      stockChange = choose * ((float)rand()/(float)(RAND_MAX))*20;
     //printf("Stock change, %d\n", stockChange);
-    theStock->stockPrice+=stockChange;
-
-    //pthread_mutex_lock (&marketVsum);
-    //marketValue+=theStock->stockPrice;
-    theMarket.marketValue+=stockChange;
-    //theMarket.marketValue+=theStock->stockPrice;
-    //if(theMarket.marketValue>theMarket.mU){
-      //pthread_cond_signal(&marketWatch);
-    //}
-    //pthread_mutex_unlock (&marketVsum);
+    //-- Change stock price -----------------------------------------
+      theStock->stockPrice+=stockChange;
+    //-- Change market value ----------------------------------------
+      theMarket.marketValue+=stockChange;
+    
     //printf("The stock price for thread %d has gone up to %d\n", theStock->threadId, theStock->stockPrice);
-    printf("Market at %.2f\n", theMarket.marketValue);
+      printf("Market at %.2f\n", theMarket.marketValue);
     }
-    /*
-    //pthread_mutex_lock(&getIn);
-    //Get rid of magic numbers below
-    stockChange = rand() % 11 + (-5);
-    //printf("Stock change, %d\n", stockChange);
-    theStock->stockPrice+=stockChange;
-
-    //pthread_mutex_lock (&marketVsum);
-    //marketValue+=theStock->stockPrice;
-    theMarket.marketValue+=theStock->stockPrice;
-    //if(theMarket.marketValue>theMarket.mU){
-      //pthread_cond_signal(&marketWatch);
-    //}
-    //pthread_mutex_unlock (&marketVsum);
-    //printf("The stock price for thread %d has gone up to %d\n", theStock->threadId, theStock->stockPrice);
-    printf("Market Value is: %f\n", theMarket.marketValue);
-    //pthread_mutex_unlock(&getIn);*/
     pthread_mutex_unlock (&marketVsum);
     sleep(1);
   }
 
+//-- After the marketWatcher sees specified change in market running
+//running gets set to 0 and the stock thread jumps out of the while
+//loop and comes here to exit
   pthread_exit(NULL);
 }
 
+/* Thread used to initialize the marketDown watcher thread
+ * ----------------------------------------------------------------*/
 void* initWatchDown(void* threadArg){
   pthread_mutex_lock(&marketVsum);
   float marketDown = *(float*)threadArg;
@@ -186,10 +188,12 @@ void* initWatchDown(void* threadArg){
   pthread_exit(NULL);
 }
 
+/* Thread used to initalize the marketUp watcher thread
+ * ----------------------------------------------------------------*/
 void* initWatchUp(void* threadArg){
   pthread_mutex_lock(&marketVsum);
-  //pthread_mutex_lock(&marketVsum);
   float marketUp = *(float*)threadArg;
+  
   //printf("In the marketup\n");
   //pthread_mutex_lock(&marketVsum);
   while(theMarket.marketValue<marketUp && theMarket.running==1){
@@ -201,6 +205,6 @@ void* initWatchUp(void* threadArg){
   theMarket.running = 0;
   //printf("Change run status\n");
   pthread_mutex_unlock(&marketVsum);
-  //theMarket.running = 0;
+  
   pthread_exit(NULL);
 }
